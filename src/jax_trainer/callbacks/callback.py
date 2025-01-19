@@ -8,9 +8,7 @@ from jax_trainer.datasets import DatasetModule
 class Callback:
     """Base class for callbacks."""
 
-    def __init__(
-        self, config: ConfigDict, trainer: Any, data_module: Optional[DatasetModule] = None
-    ):
+    def __init__(self, config: ConfigDict, trainer: Any, data_module: Optional[DatasetModule] = None):
         """Base class for callbacks.
 
         Args:
