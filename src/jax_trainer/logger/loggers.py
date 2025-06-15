@@ -1,45 +1,67 @@
 import json
+import logging
 import os
 import time
 from collections import defaultdict
-from typing import Any, Dict, Optional, Tuple, Union
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
-import torch
-from absl import logging
-from flax.core import FrozenDict
-from ml_collections import ConfigDict
-from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger
+from compoconf import (
+    ConfigInterface,
+    RegistrableConfigInterface,
+    dump_config,
+    register,
+    register_interface,
+)
 
-from jax_trainer.logger.enums import LogFreq, LogMetricMode, LogMode
-from jax_trainer.logger.metrics import HostMetrics, Metrics, get_metrics
-from jax_trainer.logger.utils import build_tool_logger
+from .backend import TensorboardConfig, ToolLoggerInterface
+from .enums import LogFreq, LogMetricMode, LogMode
+from .metrics import HostMetrics, Metrics, get_metrics
+
+LOGGER = logging.getLogger(__name__)
 
 
-class Logger:
+@dataclass
+class LoggerConfig(ConfigInterface):
+    log_steps_every: int = 50
+    log_dir: str = ""
+    log_file_verbosity: str = "warning"
+    tool_config: ToolLoggerInterface.cfgtype = field(default_factory=TensorboardConfig)
+
+
+@register
+@register_interface
+class Logger(RegistrableConfigInterface):
     """Logger class to log metrics, images, etc.
 
     to Tensorboard or Weights and Biases.
     """
 
-    def __init__(self, config: ConfigDict, full_config: ConfigDict):
-        """Logger class to log metrics, images, etc. to Tensorboard or Weights and Biases.
+    config: LoggerConfig
+
+    def __init__(self, config: LoggerConfig, full_config: Any):
+        """Logger class to log metrics, images, etc. to Tensorboard or Weights
+        and Biases.
 
         Args:
-            config (ConfigDict): The logger config.
-            full_config (ConfigDict): The full config of the trainer, to be logged.
+            config (LoggerConfig): The logger config.
+            full_config (dataclass | dict): The full config of the trainer, to be logged.
         """
         self.config = config
         self.full_config = full_config
-        self.logger = build_tool_logger(config, full_config)
+        self.logger: ToolLoggerInterface = config.tool_config.instantiate(
+            ToolLoggerInterface, full_config=dump_config(full_config)
+        )
         self.logging_mode = "train"
         self.step_metrics = self._get_new_metrics_dict()
         self.step_count = 0
         self.full_step_counter = 0
-        self.log_steps_every = config.get("log_steps_every", 50)
+        self.log_steps_every = config.log_steps_every
         self.epoch_metrics = self._get_new_metrics_dict()
         self.epoch_idx = 0
         self.epoch_element_count = 0
@@ -48,14 +70,8 @@ class Logger:
         self.epoch_start_time = None
 
     def _get_new_metrics_dict(self):
-        """
-        Returns a default dict for metrics, with the following structure:
-        {
-            'METRIC_KEY': {
-                'value': float | jnp.ndarray,
-                'mode': LogMetricMode
-            }
-        }
+        """Returns a default dict for metrics, with the following structure: {
+        'METRIC_KEY': { 'value': float | jnp.ndarray, 'mode': LogMetricMode } }
 
         Returns:
             Dict[str, Dict[str, Any]]: The default dict for metrics.
@@ -63,7 +79,8 @@ class Logger:
         return defaultdict(lambda: {"value": 0, "mode": "mean"})
 
     def log_metrics(self, metrics: HostMetrics, step: int, log_postfix: str = ""):
-        """Logs a dict of metrics to the tool of choice (e.g. Tensorboard/Wandb).
+        """Logs a dict of metrics to the tool of choice (e.g.
+        Tensorboard/Wandb).
 
         Args:
             metrics (Dict[str, Any]): The metrics that should be logged.
@@ -88,11 +105,12 @@ class Logger:
     def log_scalar(
         self,
         metric_key: str,
-        metric_value: Union[float, jnp.ndarray],
+        metric_value: float | jnp.ndarray,
         step: int,
         log_postfix: str = "",
     ):
-        """Logs a single scalar metric to the tool of choice (e.g. Tensorboard/Wandb).
+        """Logs a single scalar metric to the tool of choice (e.g.
+        Tensorboard/Wandb).
 
         Args:
             metric_key (str): The key of the metric to log.
@@ -117,7 +135,7 @@ class Logger:
             epoch (int): The index of the epoch.
             mode (str, optional): The logging mode. Should be in ["train", "val", "test"]. Defaults to "train".
         """
-        assert mode in ["train", "val", "test"], f"Unknown logging mode {mode}."
+        assert mode == "train" or mode.startswith("val") or mode.startswith("test")
         self.logging_mode = mode
         self.epoch_idx = epoch
         self._reset_epoch_metrics()
@@ -163,7 +181,7 @@ class Logger:
         self.epoch_step_count = 0
         self.epoch_start_time = time.time()
 
-    def log_epoch_scalar(self, key: str, value: Union[float, int, jnp.ndarray]):
+    def log_epoch_scalar(self, key: str, value: float | int | jnp.ndarray):
         """Logs a single scalar metric in the metric dict of the current epoch.
 
         Args:
@@ -173,8 +191,8 @@ class Logger:
         self.epoch_metrics[key] = value
 
     def _finalize_metrics(self, metrics: HostMetrics) -> HostMetrics:
-        """Finalizes the metrics of the current epoch by aggregating them over the epoch,
-        corresponding to their selected mode.
+        """Finalizes the metrics of the current epoch by aggregating them over
+        the epoch, corresponding to their selected mode.
 
         Args:
             metrics (HostMetrics): The metrics to finalize.
@@ -236,8 +254,9 @@ class Logger:
         return metrics, final_epoch_metrics
 
     def save_metrics(self, filename: str, metrics: Dict[str, Any]):
-        """Saves a dictionary of metrics to file. Can be used as a textual representation of the
-        validation performance for checking in the terminal.
+        """Saves a dictionary of metrics to file. Can be used as a textual
+        representation of the validation performance for checking in the
+        terminal.
 
         Args:
           filename: Name of the metrics file without folders and postfix.
@@ -246,6 +265,7 @@ class Logger:
         metrics = {
             k: metrics[k] for k in metrics if isinstance(metrics[k], (int, float, str, bool))
         }
+        os.makedirs(os.path.join(self.log_dir, "metrics"), exist_ok=True)
         with open(os.path.join(self.log_dir, f"metrics/{filename}.json"), "w") as f:
             json.dump(metrics, f, indent=4)
 
@@ -255,7 +275,7 @@ class Logger:
         image: jnp.ndarray,
         step: int = None,
         log_postfix: str = "",
-        logging_mode: Optional[str] = None,
+        logging_mode: str | None = None,
     ):
         """Logs an image to the tool of choice (e.g. Tensorboard/Wandb).
 
@@ -271,17 +291,12 @@ class Logger:
             logging_mode = self.logging_mode
         if isinstance(image, jnp.ndarray):
             image = jax.device_get(image)
-        if isinstance(self.logger, TensorBoardLogger):
-            self.logger.experiment.add_image(
-                tag=f"{logging_mode}/{key}{log_postfix}",
-                img_tensor=image,
-                global_step=step,
-                dataformats="HWC",
-            )
-        elif isinstance(self.logger, WandbLogger):
-            self.logger.log_image(key=f"{logging_mode}/{key}{log_postfix}", images=[image], step=step)
-        else:
-            raise ValueError(f"Unknown logger {self.logger}.")
+        self.logger.log_image(
+            key=key,
+            image=image,
+            log_postfix=log_postfix,
+            logging_mode=logging_mode,
+        )
 
     def log_figure(
         self,
@@ -289,9 +304,10 @@ class Logger:
         figure: plt.Figure,
         step: int = None,
         log_postfix: str = "",
-        logging_mode: Optional[str] = None,
+        logging_mode: str | None = None,
     ):
-        """Logs a matplotlib figure to the tool of choice (e.g. Tensorboard/Wandb).
+        """Logs a matplotlib figure to the tool of choice (e.g.
+        Tensorboard/Wandb).
 
         Args:
             key: Name of the figure.
@@ -303,24 +319,19 @@ class Logger:
             step = self.full_step_counter
         if logging_mode is None:
             logging_mode = self.logging_mode
-        if isinstance(self.logger, TensorBoardLogger):
-            self.logger.experiment.add_figure(
-                tag=f"{logging_mode}/{key}{log_postfix}", figure=figure, global_step=step
-            )
-        elif isinstance(self.logger, WandbLogger):
-            self.logger.experiment.log({f"{logging_mode}/{key}{log_postfix}": figure}, step=step)
-        else:
-            raise ValueError(f"Unknown logger {self.logger}.")
+        self.logger.log_figure(
+            key, figure=figure, step=step, log_postfix=log_postfix, logging_mode=logging_mode
+        )
 
     def log_embedding(
         self,
         key: str,
         encodings: np.ndarray,
-        step: int = None,
-        metadata: Optional[Any] = None,
-        images: Optional[np.ndarray] = None,
+        step: int | None = None,
+        metadata: Any | None = None,
+        images: np.ndarray | None = None,
         log_postfix: str = "",
-        logging_mode: Optional[str] = None,
+        logging_mode: str | None = None,
     ):
         """Logs embeddings to the tool of choice (e.g. Tensorboard/Wandb).
 
@@ -334,25 +345,17 @@ class Logger:
             step = self.full_step_counter
         if logging_mode is None:
             logging_mode = self.logging_mode
-        if isinstance(self.logger, TensorBoardLogger):
-            images = np.transpose(images, (0, 3, 1, 2))  # (N, H, W, C) -> (N, C, H, W)
-            images = torch.from_numpy(images)
-            self.logger.experiment.add_embedding(
-                tag=f"{logging_mode}/{key}{log_postfix}",
-                mat=encodings,
-                metadata=metadata,
-                label_img=images,
-                global_step=step,
-            )
-        elif isinstance(self.logger, WandbLogger):
-            logging.warning("Embedding logging not implemented for Weights and Biases.")
-        else:
-            raise ValueError(f"Unknown logger {self.logger}.")
+        self.logger.log_embedding(
+            key, encodings=encodings, step=step, metadata=metadata, label_img=images
+        )
 
     @property
     def log_dir(self):
         """Returns the logging directory of the logger."""
-        log_dir = self.logger.log_dir
+        log_dir = self.logger.logger.log_dir
         if log_dir is None:
-            log_dir = os.path.join(self.logger.save_dir, self.logger.version)
+            log_dir = os.path.join(
+                self.logger.config.save_dir,
+                self.logger.config.version if self.logger.config.version is not None else "",
+            )
         return log_dir

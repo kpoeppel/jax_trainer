@@ -1,21 +1,30 @@
 import time
+from dataclasses import dataclass
 
 import jax
-import optax
 from absl import logging
+from compoconf import register
 
-from jax_trainer.callbacks.callback import Callback
+from jax_trainer.callbacks.callback import Callback, CallbackConfig
+from jax_trainer.nnx_dummy import nnx
 
 
+@dataclass
+class JAXProfilerConfig(CallbackConfig):
+    every_n_minutes: float = 60
+    first_step: int = 10
+    profile_n_steps: int = 5
+
+
+@register
 class JAXProfiler(Callback):
     """Callback to profile model training steps."""
 
-    def __init__(self, config, trainer, data_module):
+    config: JAXProfilerConfig
+
+    def __init__(self, config, trainer, data_module=None):
         super().__init__(config, trainer, data_module)
         self.log_dir = self.trainer.log_dir
-        self.every_n_minutes = config.get("every_n_minutes", 60)
-        self.first_step = config.get("first_step", 10)
-        self.profiler_n_steps = config.get("profile_n_steps", 5)
         self.profiler_active = False
         self.profiler_last_time = None
 
@@ -25,11 +34,11 @@ class JAXProfiler(Callback):
 
     def on_training_step(self, step_metrics, epoch_idx, step_idx):
         if self.profiler_active:
-            if step_idx >= self.profile_start_step + self.profiler_n_steps:
+            if step_idx >= self.profile_start_step + self.config.profile_n_steps:
                 self.stop_trace()
         else:
-            if (step_idx == self.first_step) or (
-                time.time() - self.profiler_last_time > self.every_n_minutes * 60
+            if (step_idx == self.config.first_step) or (
+                time.time() - self.profiler_last_time > self.config.every_n_minutes * 60
             ):
                 self.start_trace(step_idx)
 
@@ -48,7 +57,10 @@ class JAXProfiler(Callback):
     def stop_trace(self):
         if self.profiler_active:
             logging.info("Stopping trace")
-            jax.tree_map(lambda x: x.block_until_ready(), self.trainer.state.params)
+            if self.trainer.config.model_mode == "nnx":
+                jax.tree_map(lambda x: x.block_until_ready(), nnx.state(self.trainer.model))
+            else:
+                jax.tree_map(lambda x: x.block_until_ready(), self.trainer.state.params)
             jax.profiler.stop_trace()
             self.profiler_last_time = time.time()
             self.profiler_active = False

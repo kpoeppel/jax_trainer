@@ -1,17 +1,27 @@
 import os
+from dataclasses import dataclass
 
 import jax
 import numpy as np
 import optax
 from absl import logging
+from compoconf import register
 
-from jax_trainer.callbacks.callback import Callback
+from jax_trainer.callbacks.callback import Callback, CallbackConfig
 
 
+@dataclass
+class LearningRateMonitorConfig(CallbackConfig):
+    pass
+
+
+@register
 class LearningRateMonitor(Callback):
     """Callback to monitor the learning rate."""
 
-    def __init__(self, config, trainer, data_module):
+    config: LearningRateMonitorConfig
+
+    def __init__(self, config, trainer, data_module=None):
         super().__init__(config, trainer, data_module)
         self.log_dir = self.trainer.log_dir
 
@@ -29,39 +39,83 @@ class LearningRateMonitor(Callback):
         Args:
             epoch_idx: Index of the current epoch. Used as logging step.
         """
-        schedule = self.trainer.lr_schedule
-        if schedule is None:
+        try:
+            if self.trainer.config.model_mode == "nnx":
+                schedule = self.trainer.optimizer.tx.scheduler
+                optimizer = self.trainer.optimizer
+            elif self.trainer.config.model_mode == "linen":
+                schedule = self.trainer.state.tx.scheduler
+                optimizer = self.trainer.state
+        except AttributeError:
             logging.warning("No learning rate schedule found.")
             return
         opt_state = [
-            s
-            for s in self.trainer.state.opt_state[-1]
-            if isinstance(s, optax.ScaleByScheduleState)
+            subs
+            for s in optimizer.opt_state
+            for subs in (s if isinstance(s, tuple) else (s,))
+            if isinstance(subs, optax.ScaleByScheduleState)
         ]
+
         if len(opt_state) == 0:
-            logging.warning("No state of a learning rate schedule found.")
-            return
-        if len(opt_state) > 1:
-            logging.warning(
-                "Found multiple states of a learning rate schedule. Using the last one."
-            )
-        step = opt_state[-1].count
-        lr = schedule(step)
+            # try hyperparam state
+            hyperparams = {}
+
+            if hasattr(optimizer.opt_state, "hyperparams"):
+                hyperparams.update(**optimizer.opt_state.hyperparams)
+
+            for subs in (
+                [optimizer.opt_state]
+                if not isinstance(optimizer.opt_state, tuple)
+                else optimizer.opt_state
+            ):
+                if hasattr(subs, "hyperparams"):
+                    hyperparams.update(**subs.hyperparams)
+
+            if hasattr(optimizer.opt_state, "inner_state"):
+                for inner_state in (
+                    optimizer.opt_state.inner_state
+                    if isinstance(optimizer.opt_state.inner_state, tuple)
+                    else (optimizer.opt_state.inner_state,)
+                ):
+                    if hasattr(inner_state, "hyperparams"):
+                        hyperparams.update(**inner_state.hyperparams)
+
+            if "learning_rate" in hyperparams:
+                lr = hyperparams["learning_rate"]
+                if hasattr(lr, "value"):
+                    lr = lr.value
+            else:
+                logging.warning("No state of a learning rate schedule found.")
+                return
+        else:
+            if len(opt_state) > 1:
+                logging.warning(
+                    "Found multiple states of a learning rate schedule. Using the last one."
+                )
+            step = opt_state[-1].count.value
+            lr = schedule(step)
         self.trainer.logger.log_scalar("optimizer/lr", lr, epoch_idx)
 
 
+@dataclass
+class GradientSpikeMonitorConfig(CallbackConfig):
+    threshold: float = 2.0
+    log_to_disk: bool = False
+    ema_decay: float = 0.995
+
+
+@register
 class GradientSpikeMonitor(Callback):
     """Callback to monitor gradient spikes."""
 
-    def __init__(self, config, trainer, data_module):
+    config: GradientSpikeMonitorConfig
+
+    def __init__(self, config, trainer, data_module=None):
         super().__init__(config, trainer, data_module)
         assert (
-            self.trainer.trainer_config.log_grad_norm
+            self.trainer.config.log_grad_norm
         ), "log_grad_norm must be True to use GradientSpikeMonitor."
         self.log_dir = self.trainer.log_dir
-        self.threshold = config.get("threshold", 2.0)
-        self.log_to_disk = config.get("log_to_disk", False)
-        self.ema_decay = config.get("ema_decay", 0.995)
         self.max_elements = int(np.log(1e-3) / np.log(self.ema_decay))
 
     def on_training_start(self):
@@ -95,7 +149,7 @@ class GradientSpikeMonitor(Callback):
         self.losses = np.concatenate([self.losses, epoch_losses])
         self.grad_norms_buffer = []
         self.losses_buffer = []
-        if self.log_to_disk:
+        if self.config.log_to_disk:
             np.savez(
                 os.path.join(os.path.join(self.log_dir, "gradient_spikes.npz")),
                 grad_norms=self.grad_norms,
@@ -104,13 +158,15 @@ class GradientSpikeMonitor(Callback):
         self.log_gradients_spikes(num_elements=epoch_losses.shape[0], epoch_idx=epoch_idx)
 
     def log_gradients_spikes(self, num_elements: int, epoch_idx: int):
+        ema_decay = self.config.ema_decay
+        threshold = self.config.threshold
         grad_norms = self.grad_norms
         losses = self.losses
         if num_elements + self.max_elements < self.grad_norms.shape[0]:
             grad_norms = grad_norms[-(num_elements + self.max_elements) :]
             losses = losses[-(num_elements + self.max_elements) :]
         # Calculate EMA by giving each element the weight for the final EMA element.
-        weights = np.zeros_like(grad_norms) + self.ema_decay
+        weights = np.zeros_like(grad_norms) + ema_decay
         weights = np.power(weights, np.flip(np.arange(grad_norms.shape[0])))
         # Normalize all means with respect to all previous weights.
         weight_cumsum = np.cumsum(weights)
@@ -121,7 +177,7 @@ class GradientSpikeMonitor(Callback):
         # Check for elements that are spikes compared to the previous EMA.
         grad_norms_spike = (
             grad_norms[-min(num_elements, grad_norms.shape[0] - 1) :]
-            > self.threshold * grad_norms_ema[-num_elements - 1 : -1]
+            > threshold * grad_norms_ema[-num_elements - 1 : -1]
         )
         losses_spike = (
             losses[-min(num_elements, losses.shape[0] - 1) :]

@@ -1,28 +1,26 @@
 # JAX-Trainer: Lightning-like API for JAX with Flax
 
-This repository is a work in progress. The goal is to provide a Lightning-like API for JAX with Flax. The API is inspired by [PyTorch Lightning](https://github.com/Lightning-AI/lightning) and has as basic element a `TrainerModule`. This module implements common training and evaluation loops, and can be used to train a model with a few lines of code. The train loop can be extended via callbacks, which are similar to Lightning's callbacks. The API is still in flux and may change in the future.
+This repository is an extension of Phillip Lippe's `jax_trainer`. The goal is to provide a Lightning-like API for JAX with Flax. The API is inspired by [PyTorch Lightning](https://github.com/Lightning-AI/lightning) and has as basic element a `TrainerModule`. This module implements common training and evaluation loops, and can be used to train a model with a few lines of code. This fork extends the library for use of both `flax.linen` and `flax.nnx` based models. The train loop can be extended via callbacks, which are similar to Lightning's callbacks.
 
-For handling hyperparameters, this repository makes use of [ml-collections](https://ml-collections.readthedocs.io/en/latest/). This library provides a hierarchical configuration system, which is used to configure the `TrainerModule` and the callbacks.
-
-For an example usage, see our [template repository](https://github.com/phlippe/jax_trainer_template).
+While in original repo, `ml-collections` was used for configuration, this was refactored to use the [compoconf](https://github.com/kpoeppel/compoconf.git) library. The benefits are type-safety and easy compositionality via interface / protocol patterns.
 
 ## Installation
 
 In future, the package will be available on PyPI. For now, you can install it from source:
 
 ```bash
-git clone https://github.com/phlippe/jax_trainer.git
+git clone https://github.com/kpoeppel/jax_trainer.git
 cd jax_trainer
 pip install -e .
 ```
 
 ## Usage
 
-In the following, we will go through the main API choices in the library. In most cases, the user will only need to implement a loss function in a subclass of `TrainerModule` for each task, besides the actual models in Flax. The training loop can be further customized via callbacks. All modules are then configured via a YAML file and can be trained with a few lines of code. For an example, see our [template repository](https://github.com/phlippe/jax_trainer_template).
+In the following, we will go through the main API choices in the library. In most cases, the user will only need to implement a loss function in a subclass of `TrainerModule` for each task, besides the actual models in Flax. The training loop can be further customized via callbacks. All modules are then configured via a YAML file and can be trained with a few lines of code.
 
 ### TrainerModule API
 
-The `jax_trainer.trainer.TrainerModule` has been written with the goal to be as flexible as possible while still providing a simple API for training and evaluation. It's main functions are configurable via `ConfigDict`s and can be overwritten by the user.
+The `jax_trainer.trainer.TrainerModule` has been written with the goal to be as flexible as possible while still providing a simple API for training and evaluation.
 
 The main aspects of the trainer is to:
 
@@ -32,7 +30,8 @@ The main aspects of the trainer is to:
 - **Saving and loading checkpoints**: The trainer provides functions to save and load checkpoints. The checkpoints are saved as `TrainState`s and can be used to resume training or to evaluate a model. A pre-trained model can also be loaded by simply calling `TrainerModule.load_from_checkpoint`, similar to the API in Lightning.
 - **Training and evaluation**: The trainer provides functions to train and evaluate a model. The training and evaluation loops can be extended via callbacks, which are called at different points during the training and evaluation.
 
-As a user, the main function that needs to be implemented for each individual task is `loss_function(...)`. This function takes as input the model parameters and state, the batch of data, a random number generator key, and a boolean indicating whether its training or not. The function needs to return the loss, as well as a tuple of mutable variables and optional metrics. The `TrainerModule` then takes care of the rest, which includes wrapping it into a training and evaluation function, performing gradient transformations, and calling it in a loop. Additionally, to provide a unified interface with other functions like initialization, the subclass needs to implement `batch_to_input` which, given a batch, returns the input to the model. The following example shows a simple trainer module for image classification:
+As a user, the main function that needs to be implemented for each individual task is `loss_function_linen(...)` in the case of `linen` and `loss_function(...)` in the case of `nnx`. This function takes as input the model parameters and state, the batch of data, a random number generator key, and a boolean indicating whether its training or not. The function needs to return the loss, as well as a tuple of mutable variables and optional metrics. For the `nnx` case the state is part of the `nnx.Module`, therefore it only that the `model`, `batch`, and `train` switch and returns main `loss` and `metrics`. The `TrainerModule` then takes care of the rest, which includes wrapping it into a training and evaluation function, performing gradient transformations, and calling it in a loop. The choice of `nnx` model vs `linen` model is in the `model_mode` `TrainerConfig` switch. Additionally, to provide a unified interface with other functions like initialization, the subclass needs to implement `batch_to_input` which, given a batch, returns the input to the model. Model and Optimizer have to implement the `BaseModelNNX`/`BaseModelLinen` and `OptimizerInterface`, and via `compoconf`, they can automatically register their configuration type and can be instantiated from that config.
+The following example shows a simple trainer module for image classification:
 
 ```python
 class ImgClassifierTrainer(TrainerModule):
@@ -40,7 +39,7 @@ class ImgClassifierTrainer(TrainerModule):
     def batch_to_input(self, batch: SupervisedBatch) -> Any:
         return batch.input
 
-    def loss_function(
+    def loss_function_linen(
         self,
         params: Any,
         state: TrainState,
@@ -50,13 +49,29 @@ class ImgClassifierTrainer(TrainerModule):
     ) -> Tuple[Any, Tuple[Any, Dict]]:
         imgs = batch.input
         labels = batch.target
-        logits, mutable_variables = self.model_apply(
+        logits, mutable_variables = self.model_linen_apply(
             params=params, state=state, input=imgs, rng=rng, train=train
         )
         loss = optax.softmax_cross_entropy_with_integer_labels(logits, labels).mean()
         acc = (logits.argmax(axis=-1) == labels).mean()
         metrics = {"acc": acc}
         return loss, (mutable_variables, metrics)
+
+    def loss_function(
+        self,
+        model: nnx.Module,
+        batch: SupervisedBatch,
+        train: bool = True,
+    ) -> Tuple[Any, Dict]:
+        imgs = batch.input
+        labels = batch.target
+        logits, mutable_variables = self.model_apply(
+            params=params, state=state, input=imgs, rng=rng, train=train
+        )
+        loss = optax.softmax_cross_entropy_with_integer_labels(logits, labels).mean()
+        acc = (logits.argmax(axis=-1) == labels).mean()
+        metrics = {"acc": acc}
+        return loss, metrics
 ```
 
 ### Logging API
@@ -103,7 +118,6 @@ The following callbacks are pre-defined:
 
 - `ModelCheckpoint`: Saves the model and optimizer state after validation. This checkpoint can be used to resume training or to evaluate the model. It is implemented using `orbax` and is similar to the `ModelCheckpoint` in Lightning.
 - `LearningRateMonitor`: Logs the learning rate at the beginning of each epoch. This is similar to the `LearningRateMonitor` in Lightning.
-- `ConfusionMatrixCallback`: As an example for a custom callback for classification, this callback logs the confusion matrix of a classifier after validation and testing. This callback requires the metric key `conf_matrix` to be logged.
 
 For configuring the callbacks, also for custom callbacks, see the configuration documentation below.
 
@@ -116,55 +130,81 @@ The dataset API abstracts the data loading with PyTorch, using numpy arrays for 
 The configuration is done via a YAML file. It consists of four main sections: `trainer`, `model`, `optimizer`, and `dataset`. The `trainer` section configures the `TrainerModule` and the callbacks. The `model` section configures the model, which is implemented by the user. The `optimizer` section configures the optimizer and the learning rate scheduler. The `dataset` section configures the dataset. The following example shows a configuration for training a simple MLP on CIFAR10:
 
 ```yaml
+seed: 42
+num_gpus: 1
 trainer:
-  name: ImgClassifierTrainer
+  class_name: ImgClassifierTrainer
   train_epochs: 5
   check_val_every_n_epoch: 1
   debug: False
   enable_progress_bar: True
-  tabulate_model: True
   seed: 42
-  seed_eval: 0
+  log_grad_norm: True
+  detect_nans: True
+  num_classes: 10
   logger:
+    class_name: Logger
     log_dir: tests/checkpoints/BuildTrainerTest/
-    tool: TensorBoard
-    project_name: default
+    log_steps_every: 50
+    tool_config:
+      class_name: TensorboardToolLogger
+      name: ""
+      save_dir: tests/checkpoints/BuildTrainerTest/
+      use_timestamp_version: false
+      version: "0"
     log_file_verbosity: warning
   callbacks:
     ModelCheckpoint:
+      class_name: ModelCheckpoint
       monitor: val/acc
       mode: max
       save_top_k: 1
       save_optimizer_state: False
     LearningRateMonitor:
+      class_name: LearningRateMonitor
       every_n_epochs: 1
-    ConfusionMatrixCallback:
-      normalize: True
-      cmap: Blues
-      every_n_epochs: 2
+    JAXProfiler:
+      class_name: JAXProfiler
+      every_n_minutes: 60
+      first_step: 10
+      profile_n_steps: 20
+    # GradientSpikeMonitor:
+    #   every_n_epochs: 1
+    #   log_to_disk: True
+    #   ema_decay: 0.99
+    #   threshold: 3.0
 model:
-  name: tests.models.SimpleEncoder
-  hparams:
-    c_hid: 32
-    latent_dim: 10
-    act_fn: gelu
-    batch_norm: True
+  class_name: SimpleClassifier
+  c_hid: 32
+  num_classes: 10
+  act_fn: gelu
+  batch_norm: True
 optimizer:
-  name: adam
-  lr: 1e-3
-  params:
-    beta1: 0.9
-  transforms:
-    weight_decay: 0
-    gradient_clip_norm: 10.0
-  scheduler:
-    name: warmup_cosine_decay
-    warmup_steps: 100
+  class_name: AdamW
+  b1: 0.9
+  b2: 0.999
+  eps: 1.0e-08
+  learning_rate:
+    class_name: WarmupCosineDecaySchedule
+    decay_factor: 0.1
+    decay_steps: 1555
+    init_value: 0.0
+    peak_value: 0.001
+    steps: 1755
+    warmup_steps: 200
+  nesterov: false
+  weight_decay:
+    class_name: WeightDecay
+    mode: whitelist
+    parameter_regex_exclude: ""
+    parameter_regex_include: ((.*weight$)|(.*kernel$))
+    value: 0.01
 dataset:
-  constructor: jax_trainer.datasets.build_cifar10_datasets
+  class_name: CIFAR10Dataset
   data_dir: data/
-  batch_size: 128
-  num_workers: 4
+  global_batch_size: 128
+  local_batch_size: 128
+  num_workers: 0
 ```
 
 In the following, we will go through the different sections and explain the configuration options.
@@ -173,32 +213,32 @@ In the following, we will go through the different sections and explain the conf
 
 The `trainer` section configures the `TrainerModule` and the callbacks. The `TrainerModule` is configured via the following options:
 
-- `name`: Name of the `TrainerModule` class. Currently, the following classes are available:
+- `class_name`: Name of the `TrainerModule` class. Currently, the following classes are available:
   - `ImgClassifierTrainer`: Trainer for image classification tasks.
   - `TrainerModule`: Base class for implementing custom trainers.
-    For own-implemented trainers, the name of the class is the path to the class, e.g. `my_module.MyTrainer`.
+    For own-implemented trainers, the name of the class is the class_name and the class must be registered as implementing the interface TrainerModule via `compoconf`
 - `train_epochs`: Number of training epochs.
-- `seed`: Seed for the initialization, model state, etc.
 - `check_val_every_n_epoch` (optional): Number of epochs between validation checks (default: 1). If set to `0`, no validation is performed.
 - `debug` (optional): If `True`, the trainer is run in debug mode (default: False). This means that the training and validation steps are not jitted and can be easier analysed in case of an error.
 - `enable_progress_bar` (optional): If True, a progress bar is shown during training and validation (default: True).
-- `tabulate_model` (optional): If True, the model is tabulated and the result is printed to the logging file (default: True).
-- `seed_eval` (optional): Seed for the evaluation (default: 0). This seed is used for the validation and evaluation of the model after training.
+- `seed`: Seed for the initialization, model state, etc.
 - `log_grad_norm` (optional): If True, the gradient norm is logged during training.
+- `detect_nans` (optional): If True, the trainer will detect NaNs in the loss and gradients.
+- `num_classes` (optional): Number of classes in the dataset. This is only required for some trainers, such as `ImgClassifierTrainer`.
 - `logger`: Configuration of the logger. This is optional and in case of not being provided, a default logger is created. The following options are available:
-  - `class` (optional): Name of the logger class. The default logger is `Logger`, but can be overwritten by providing the path to a custom logger class, e.g. `my_module.MyLogger`.
   - `log_dir` (optional): Directory where the logging files are stored. If not provided, a default directory based on the model name and version is created.
-  - `base_log_dir` (optional): Only used if `log_dir` is None or not given. Base directory where the logging files are stored. If not provided, the default directory of `checkpoints/` is used.
-  - `logger_name` (optional): Name of the logger. Is appended to the `base_log_dir` with the model name if given.
-  - `tool` (optional): Name of the logging tool (default: Tensorboard). Currently, the following tools are available:
-    - `TensorBoard`: Logging to TensorBoard.
-    - `WandB`: Logging to Weights & Biases.
-  - `project_name` (optional): Name of the project. This is only used for Weights & Biases.
   - `log_steps_every` (optional): Number of training steps between logging (default: 50). If set to `0`, logging is only performed per epoch. Otherwise, both per-epoch and per-step logging is performed.
+  - `tool_config` (optional): Configuration of the logging tool. The following options are available:
+    - `class_name`: Name of the logging tool class. Currently, the following tools are available:
+      - `TensorboardToolLogger`: Logging to TensorBoard.
+      - `WandBToolLogger`: Logging to Weights & Biases.
+    - `name` (optional): Name of the experiment.
+    - `save_dir` (optional): Directory where the logging files are stored.
+    - `use_timestamp_version` (optional): If True, a timestamp is added to the version number.
+    - `version` (optional): Version number of the experiment.
   - `log_file_verbosity` (optional): Verbosity of the logging file. Possible values are `debug`, `info`, `warning`, and `error`. By default, the verbosity is set to `info`.
-  - `stderrthreshold` (optional): Verbosity of the logging to stderr. Possible values are `debug`, `info`, `warning`, and `error`. By default, the verbosity is set to `warning`.
 
-The `callbacks` section configures the callbacks. The key of a callback is its name (if its a default one in `jax_trainer`) or arbitrary description. In case of the latter, the attrbitue `class` needs to be added, with the respective class path, e.g. `class: mymodule.MyCallback`. Each callback has its own config and parameters. The following callbacks are pre-defined:
+The `callbacks` section configures the callbacks. The key of a callback is its name (if its a default one in `jax_trainer`) or arbitrary description. In case of the latter, the attribute `class_name` needs to be added, with the respective class path, e.g. `class_name: MyCallback`. Each callback has its own config and parameters. The following callbacks are pre-defined:
 
 - `ModelCheckpoint`: Saves the model and optimizer state after validation.
   - `monitor` (optional): Metric to monitor (default: `val/loss`).
@@ -217,10 +257,8 @@ The `callbacks` section configures the callbacks. The key of a callback is its n
 
 ### Model
 
-The `model` section configures the model. The following options are available:
-
-- `name`: Path to the model class. The path is relative to the current working directory.
-- `hparams` (optional): Hyperparameters of the model. These are passed to the model constructor. This is optional and can be omitted if the model does not require any hyperparameters.
+The `model` section configures the model. It is a object of the config class corresponding to the model class that should be used.
+The model class should implement BaseModelNNX or BaseModelLinen interfaces and register its config via `compoconf`'s `register`.
 
 ### Optimizer
 
@@ -228,62 +266,55 @@ The `optimizer` section configures the optimizer and the learning rate scheduler
 
 #### Optimizer class
 
-- `name`: Name of the optimizer. Currently, the following optimizers are available:
-  - `adam`: Adam optimizer.
-  - `adamw`: AdamW optimizer.
-  - `sgd`: SGD optimizer.
+- Config class of the optimizer. Currently, the following optimizers are available:
+  - `AdamW`
+  - `SGD`
+  - `Lamb`
 
-Additionally, there are some options which are specific to the optimizer that can be defined in the config option `params`:
-
-- `beta1` (optional): Beta1 parameter of the Adam/AdamW optimizer (default: `0.9`).
-- `beta2` (optional): Beta2 parameter of the Adam/AdamW optimizer (default: `0.999`).
-- `eps` (optional): Epsilon parameter of the Adam/AdamW optimizer (default: `1e-8`).
-- `momentum` (optional): Momentum parameter of the SGD optimizer (default: `0.0`).
-- `nestorov` (optional): If True, Nesterov momentum is used in the SGD optimizer (default: `False`).
+Each optimizer has its own specific parameters that can be configured.
 
 #### Learning rate scheduler
 
-The learning rate scheduler is optional and is by default constant. The following options are available:
+The learning rate scheduler is optional and is by default constant. The `learning_rate` field can be a float for a constant learning rate, or a configuration for a scheduler. The following schedulers are available:
 
-- `lr`: Base learning rate of the optimizer.
-- `scheduler` (optional): Configuration of a learning rate scheduler. This is optional and can be omitted if no scheduler is used. The following options are available:
-  - `name`: Name of the scheduler. Currently, the following schedulers are available:
-    - `constant`: Constant scheduler.
-    - `cosine_decay`: Cosine decay scheduler.
-    - `exponential_decay`: Exponential decay scheduler.
-    - `warmup_cosine_decay`: Warmup cosine decay scheduler.
+- `ConstantSchedule`
+- `CosineSchedule`
+- `LinearSchedule`
+- `ExponentialSchedule`
+- `ConcatSchedule`
+- `WarmupCosineDecaySchedule`
 
-For each learning rate schedule, there are some options which are specific to the scheduler:
-
-- `alpha` (optional): Alpha parameter of the cosine decay scheduler. The minimum value of the multiplier used to adjust the learning rate (default: `0.0`).
-- `decay_rate`: Decay rate of the exponential decay scheduler. Needs to be set if the scheduler is `exponential_decay`.
-- `transition_steps` (optional): Factor with which to divide the step count in the exponential decay scheduler (default: `0`).
-- `staircase` (optional): If True, the learning rate is decayed at discrete intervals (default: `False`).
-- `warmup_steps`: Number of warmup steps of the warmup scheduler. Needs to be set if the scheduler is `warmup_cosine_decay`.
-- `end_value` (optional): End value for the learning rate of the warmup scheduler (default: `0.0`).
+Each scheduler has its own specific parameters that can be configured.
 
 #### Gradient Transformations
 
-The gradient transformations are optional and can be used to transform the gradients before applying them to the model parameters. They are defined under the key `transforms`. Each can be defined by a value (e.g. float), or a dictionary with the following options:
+The gradient transformations are optional and can be used to transform the gradients before applying them to the model parameters. They are defined under the key `transforms`. The following transformations are available:
 
-- `value`: Value of the transformation.
-- `before_optimizer`: If True, the transformation is applied before the optimizer step. If False, the transformation is applied after the optimizer step (default: `True`).
+- `WeightDecay`
+- `GradClipNorm`
+- `GradClipValue`
 
-The following gradient transformations are available:
-
-- `weight_decay` (optional): Weight decay parameter of the optimizer (default: `0.0`).
-- `gradient_clip_norm` (optional): Gradient clipping norm of the optimizer (default: `None`).
-- `gradient_clip_value` (optional): Gradient clipping value of the optimizer (default: `None`).
+Each transformation has its own specific parameters that can be configured, including a `before_optimizer` flag to specify if the transformation is applied before or after the optimizer step.
 
 ### Dataset
 
-The `dataset` section configures the dataset and the data loading. The following options are available:
+The `dataset` section configures the dataset and the data loading.
 
-- `constructor`: Path to the dataset constructor. The path is relative to the current working directory.
+- `class_name`: Name of the dataset class. Currently, the following datasets are available:
+  - `CIFAR10Dataset`
+  - `MNISTDataset`
+
+Each dataset has its own specific parameters that can be configured, such as:
+
 - `data_dir` (optional): Directory where the dataset is stored (default: `data/`).
-- `batch_size` (optional): Batch size to use during training, validation and testing (default: `128`).
+- `global_batch_size` (optional): Global batch size to use during training, validation and testing (default: `128`).
+- `local_batch_size` (optional): Local batch size to use during training, validation and testing (default: `128`).
 - `num_workers` (optional): Number of workers to use for data loading (default: `4`).
-- `seed` (optional): Seed for the data loading (default: `42`).
+- `normalize` (optional): If True, the images are normalized (default: `True`).
+- `val_size` (optional): Number of samples to use for the validation set (default: `5000`).
+- `split_seed` (optional): Seed for splitting the dataset into train and validation sets (default: `42`).
+- `pin_memory` (optional): If True, the data loaders will copy Tensors into device/CUDA pinned memory before returning them (default: `True`).
+- `prefetch_factor` (optional): Number of batches loaded in advance by each worker (default: `4`).
 
 ## Contributing
 

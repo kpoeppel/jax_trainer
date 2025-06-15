@@ -1,3 +1,4 @@
+import logging
 import pickle
 from dataclasses import dataclass
 from pathlib import Path
@@ -6,7 +7,8 @@ from typing import Any, Tuple
 import jax
 import jax.numpy as jnp
 import numpy as np
-from absl import logging
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -21,7 +23,7 @@ def array_to_spec(array: jnp.ndarray) -> ArraySpec:
     return ArraySpec(
         shape=array.shape,
         dtype=array.dtype,
-        device=str(array.device()),
+        device=str(array.device),
         value=array.reshape(-1)[0].item(),
     )
 
@@ -47,7 +49,7 @@ def spec_to_array(spec: ArraySpec) -> jnp.ndarray:
             try:
                 device = jax.devices(backend_name)[device_id]
             except Exception as e:
-                logging.warning(f"Backend {backend_name} not found, using CPU instead.")
+                LOGGER.warning(f"Backend {backend_name} not found, using CPU instead.")
                 device = jax.devices("cpu")[0]
         array = jax.device_put(x=array, device=device)
         return array
@@ -70,7 +72,7 @@ def convert_from_array_spec(input: Any) -> Any:
 
 
 def save_pytree(pytree: Any, path: str | Path):
-    pytree = jax.tree_map(convert_to_array_spec, pytree)
+    pytree = jax.tree_util.tree_map(convert_to_array_spec, pytree)
     with open(path, "wb") as f:
         pickle.dump(pytree, f)
 
@@ -78,5 +80,5 @@ def save_pytree(pytree: Any, path: str | Path):
 def load_pytree(path: str | Path) -> Any:
     with open(path, "rb") as f:
         pytree = pickle.load(f)
-    pytree = jax.tree_map(convert_from_array_spec, pytree)
+    pytree = jax.tree_util.tree_map(convert_from_array_spec, pytree)
     return pytree

@@ -7,10 +7,11 @@ name = "jax_trainer"
 version = "0.1.0"
 description = "Lightning-like framework for JAX"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 license = "MIT"
 authors = [
-    { name = "Phillip Lippe", email = "phillip.lippe@googlemail.com" }
+    { name = "Korbinian Pöppel", email = "korbip@korbip.de" },
+    { name = "Phillip Lippe", email = "phillip.lippe@googlemail.com" },
 ]
 
 dependencies = [
@@ -54,7 +55,7 @@ packages = ["src/jax_trainer"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
-addopts = "-ra -q --cov=jax_trainer --cov-report=term-missing"
+# addopts = "-ra -q --cov=jax_trainer --cov-report=term-missing"
 testpaths = [
     "tests",
 ]
@@ -76,7 +77,6 @@ exclude_lines = [
 ignore_errors = true
 omit = [
     "tests/*",
-    "setup.py",
 ]
 
 [tool.black]

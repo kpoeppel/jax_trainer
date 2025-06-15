@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Any, Union
+from typing import Any
 
 import numpy as np
 
@@ -20,7 +20,7 @@ def image_to_numpy(img: Any):
     return img
 
 
-def normalize_transform(mean: Union[np.ndarray, float] = 0.0, std: Union[np.ndarray, float] = 1.0):
+def normalize_transform(mean: np.ndarray | float = 0.0, std: np.ndarray | float = 1.0):
     """Normalization transform on numpy arrays.
 
     Args:

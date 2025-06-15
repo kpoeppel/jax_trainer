@@ -1,30 +1,44 @@
-from typing import Iterable, Optional, SupportsIndex
+from dataclasses import dataclass
+from typing import Any, Iterable, SupportsIndex
 
 import jax.numpy as jnp
 import numpy as np
 import torch.utils.data as data
-from flax.struct import dataclass
-from ml_collections import ConfigDict
+from compoconf import RegistrableConfigInterface, register_interface
+from flax.struct import dataclass as batch_dataclass
 
 Dataset = data.Dataset | SupportsIndex
 DataLoader = data.DataLoader | Iterable
 
 
+@register_interface
 @dataclass
-class DatasetModule:
+class DatasetModule(RegistrableConfigInterface):
     """Data module class that holds the datasets and data loaders."""
 
-    config: ConfigDict
-    train: Optional[Dataset]
-    val: Optional[Dataset]
-    test: Optional[Dataset]
-    train_loader: Optional[DataLoader]
-    val_loader: Optional[DataLoader]
-    test_loader: Optional[DataLoader]
-    metadata: Optional[dict] = None
+    config: Any = None
+    train: Dataset | None = None
+    val: Dataset | None = None
+    test: Dataset | None = None
+    train_loader: DataLoader | None = None
+    val_loader: DataLoader | None = None
+    test_loader: DataLoader | None = None
+    metadata: dict | None = None
+    _short_name: str = ""
 
 
 @dataclass
+class DatasetConfig:
+    local_batch_size: int = 128
+    global_batch_size: int = 128
+    num_workers: int = 4
+    normalize: bool = True
+    pin_memory: bool = True
+    prefetch_factor: int = 4
+    seed: int = 42
+
+
+@batch_dataclass
 class Batch:
     """Base class for batches.
 
@@ -50,7 +64,7 @@ class Batch:
         return self.__class__(**vals)
 
 
-@dataclass
+@batch_dataclass
 class SupervisedBatch(Batch):
     """Extension of the base batch class for supervised learning."""
 

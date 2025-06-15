@@ -1,34 +1,38 @@
 seed: 42
 num_gpus: 1
 trainer:
-  name: ImgClassifierTrainer
+  class_name: ImgClassifierTrainer
   train_epochs: 5
   check_val_every_n_epoch: 1
   debug: False
   enable_progress_bar: True
-  tabulate_model: True
   seed: 42
-  seed_eval: 0
   log_grad_norm: True
   detect_nans: True
+  num_classes: 10
   logger:
+    class_name: Logger
     log_dir: tests/checkpoints/BuildTrainerTest/
-    tool: TensorBoard
-    project_name: default
+    log_steps_every: 50
+    tool_config:
+      class_name: TensorboardToolLogger
+      name: ""
+      save_dir: tests/checkpoints/BuildTrainerTest/
+      use_timestamp_version: false
+      version: "0"
     log_file_verbosity: warning
   callbacks:
     ModelCheckpoint:
+      class_name: ModelCheckpoint
       monitor: val/acc
       mode: max
       save_top_k: 1
       save_optimizer_state: False
-    ConfusionMatrixCallback:
-      normalize: True
-      cmap: Blues
-      every_n_epochs: 2
     LearningRateMonitor:
+      class_name: LearningRateMonitor
       every_n_epochs: 1
     JAXProfiler:
+      class_name: JAXProfiler
       every_n_minutes: 60
       first_step: 10
       profile_n_steps: 20
@@ -38,26 +42,34 @@ trainer:
     #   ema_decay: 0.99
     #   threshold: 3.0
 model:
-  name: tests.models.SimpleClassifier
-  hparams:
-    c_hid: 32
-    num_classes: 10
-    act_fn: gelu
-    batch_norm: True
+  class_name: SimpleClassifier
+  c_hid: 32
+  num_classes: 10
+  act_fn: gelu
+  batch_norm: True
 optimizer:
-  name: adam
-  lr: 1e-3
-  params:
-    beta1: 0.9
-    beta2: 0.999
-  transforms:
-    weight_decay: 0
-    gradient_clip_norm: 10.0
-  scheduler:
-    name: warmup_cosine_decay
-    warmup_steps: 100
+  b1: 0.9
+  b2: 0.999
+  class_name: AdamW
+  eps: 1.0e-08
+  learning_rate:
+    class_name: WarmupCosineDecaySchedule
+    decay_factor: 0.1
+    decay_steps: 1555
+    init_value: 0.0
+    peak_value: 0.001
+    steps: 1755
+    warmup_steps: 200
+  nesterov: false
+  weight_decay:
+    class_name: WeightDecay
+    mode: whitelist
+    parameter_regex_exclude: ""
+    parameter_regex_include: ((.*weight$)|(.*kernel$))
+    value: 0.01
 dataset:
-  constructor: jax_trainer.datasets.build_cifar10_datasets
+  class_name: CIFAR10Dataset
   data_dir: data/
-  batch_size: 128
+  global_batch_size: 128
+  local_batch_size: 128
   num_workers: 0

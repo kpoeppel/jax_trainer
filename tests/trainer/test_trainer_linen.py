@@ -20,13 +20,10 @@ from compoconf import parse_config
 from jax_trainer.datasets import DatasetModule
 from jax_trainer.init_mesh import init_ddp_mesh
 from jax_trainer.interfaces import BaseModelLinen, BaseModelNNX
-from jax_trainer.nnx_dummy import _NNX_IS_DUMMY
 from jax_trainer.optimizer import OptimizerInterface
 from jax_trainer.trainer import ImgClassifierTrainer, ImgClassifierTrainerConfig
 
 from ..models import *  # noqa
-
-has_nnx = not _NNX_IS_DUMMY
 
 
 @dataclass
@@ -45,6 +42,8 @@ def load_and_update_config(tmpdir):
 
     # Update paths to use temporary directory
     log_dir = os.path.join(tmpdir, "checkpoints/BuildTrainerTest/")
+    config["trainer"]["model_mode"] = "linen"
+    config["model"]["class_name"] = "SimpleClassifierLinen"
     config["trainer"]["logger"]["log_dir"] = log_dir
     config["trainer"]["logger"]["tool_config"]["save_dir"] = log_dir
 
@@ -59,7 +58,6 @@ def cleanup_logging():
     logging.get_absl_handler().close()
 
 
-@pytest.mark.skipif(not has_nnx, reason="NNX not available")
 def test_build_trainer_ddp(tmpdir, cleanup_logging):
     config = load_and_update_config(tmpdir)
 
@@ -84,10 +82,8 @@ def test_build_trainer_ddp(tmpdir, cleanup_logging):
     assert eval_metrics[5]["val/acc"] > 0.25
 
 
-@pytest.mark.skipif(not has_nnx, reason="NNX not available")
 def test_build_trainer_with_loading(tmpdir, cleanup_logging):
     """Test building a trainer and then loading it from a checkpoint."""
-
     # Step 1: Train the model and save checkpoints
     config = load_and_update_config(tmpdir)
     dataset = config.dataset.instantiate(DatasetModule, mesh=None)

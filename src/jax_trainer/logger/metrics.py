@@ -1,3 +1,4 @@
+# import time
 from typing import Any, Dict, Tuple
 
 import jax
@@ -5,7 +6,7 @@ import jax.numpy as jnp
 import numpy as np
 from flax.core import FrozenDict, freeze, unfreeze
 
-from jax_trainer.logger.enums import LogFreq, LogMetricMode, LogMode
+from .enums import LogFreq, LogMetricMode, LogMode
 
 # Immutable metrics for compilation.
 ImmutableMetricElement = FrozenDict[
@@ -58,6 +59,7 @@ def update_metrics(
         if not isinstance(metric_in, dict):
             metric_in = {"value": metric_in}
         val = metric_in["value"]
+        val2 = metric_in.get("value2", None)  # supposed to be the sum of squared values
         mode = metric_in.get("mode", LogMetricMode.MEAN)
         log_freq = metric_in.get("log_freq", LogFreq.ANY)
         log_mode = metric_in.get("log_mode", LogMode.ANY)
@@ -86,6 +88,7 @@ def update_metrics(
                 log_mode,
                 count,
                 batch_size,
+                value2=val2,
             )
     global_metrics = freeze(global_metrics)
     return global_metrics
@@ -100,6 +103,7 @@ def _update_single_metric(
     log_mode: LogMode,
     count: Any,
     batch_size: int | jax.Array,
+    value2: Any = None,
 ) -> MutableMetrics:
     """Update a single metric.
 
@@ -117,7 +121,12 @@ def _update_single_metric(
         Updated global metrics.
     """
     if key not in global_metrics:
-        metrics_dict = {"value": 0.0, "count": 0}
+        if mode == LogMetricMode.MAX:
+            metrics_dict = {"value": float("-inf"), "count": 0}
+        elif mode == LogMetricMode.MIN:
+            metrics_dict = {"value": float("inf"), "count": 0}
+        else:
+            metrics_dict = {"value": 0.0, "count": 0}
     else:
         metrics_dict = global_metrics[key]
     metrics_dict["mode"] = mode
@@ -149,7 +158,7 @@ def _update_single_metric(
                 "if the metric is already logged."
             )
             metrics_dict["value2"] = 0.0
-        metrics_dict["value2"] += value**2
+        metrics_dict["value2"] += value2 if value2 is not None else value**2
     else:
         raise ValueError(f"Unknown logging mode {mode}.")
     global_metrics[key] = metrics_dict
@@ -178,7 +187,15 @@ def get_metrics(
     """
     if isinstance(global_metrics, FrozenDict) and reset_metrics:
         global_metrics = unfreeze(global_metrics)
+    # toff = time.time()
+    # jax.lib.xla_bridge.get_backend().buffer_from_pyval(0).block_until_ready()
+    # t0 = time.time()
+
     host_metrics = jax.device_get(global_metrics)
+
+    # t1 = time.time()
+    # print("device_get alone took", (t1 - t0) * 1e3, "ms, +sync took", (t1 - toff) * 1e3, "ms")
+
     metrics = {}
     for key in host_metrics:
         if log_freq == LogFreq.ANY or log_freq == host_metrics[key]["log_freq"]:
@@ -190,7 +207,7 @@ def get_metrics(
             elif host_metrics[key]["mode"] == LogMetricMode.STD:
                 value = value / count
                 value2 = host_metrics[key]["value2"] / count
-                value = np.sqrt(value2 - value**2)
+                value = np.sqrt(np.abs(value2 - value**2) + 1e-6)
             metrics[host_key] = value
             if reset_metrics:
                 global_metrics[key]["value"] = jnp.zeros_like(global_metrics[key]["value"])

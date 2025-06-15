@@ -1,17 +1,37 @@
+from dataclasses import dataclass
 from typing import Any, Dict
 
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 from absl import logging
+from compoconf import ConfigInterface, register
 
-from jax_trainer.callbacks.callback import Callback
+from jax_trainer.callbacks.callback import Callback, CallbackConfig
 
 
+@dataclass
+class ConfusionMatrixConfig(CallbackConfig):
+    normalize: bool = False
+    format: str | None = None
+    fig_size: tuple[float, float] = (8, 8)
+    cmap: str = "Blues"
+    dpi: int = 100
+
+    def __post_init__(self):
+        if self.normalize:
+            self.format = ".2%"
+        else:
+            self.format = "d"
+
+
+@register
 class ConfusionMatrixCallback(Callback):
     """Callback to visualize the confusion matrix."""
 
-    def __init__(self, config, trainer, data_module):
+    config: ConfusionMatrixConfig
+
+    def __init__(self, config: ConfusionMatrixConfig, trainer, data_module=None):
         super().__init__(config, trainer, data_module)
         self.log_dir = self.trainer.log_dir
 
@@ -30,17 +50,10 @@ class ConfusionMatrixCallback(Callback):
             return
         conf_key = conf_key[0]
         conf_matrix = metrics[conf_key]
-        if self.config.get("normalize", False):
-            conf_matrix = conf_matrix / conf_matrix.sum(axis=1, keepdims=True)
-            format = self.config.get("format", ".2%")
-        else:
-            format = self.config.get("format", "d")
-        fig, ax = plt.subplots(
-            figsize=self.config.get("figsize", (8, 8)), dpi=self.config.get("dpi", 100)
-        )
-        sns.heatmap(
-            conf_matrix, annot=True, cmap=self.config.get("cmap", "Blues"), ax=ax, fmt=format
-        )
+        if self.config.normalize:
+            conf_matrix = conf_matrix / (conf_matrix.sum(axis=1, keepdims=True) + 1e-6)
+        fig, ax = plt.subplots(figsize=self.config.figsize, dpi=self.config.dpi)
+        sns.heatmap(conf_matrix, annot=True, cmap=self.config.cmap, ax=ax, fmt=self.config.format)
         ax.set_xlabel("Predicted labels")
         ax.set_ylabel("True labels")
         ax.set_title("Confusion matrix")

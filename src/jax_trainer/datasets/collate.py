@@ -1,10 +1,10 @@
 from functools import partial
-from typing import Any, Callable, NamedTuple, Sequence, Union
+from typing import Any, Callable, NamedTuple, Sequence
 
 import numpy as np
 
 
-def numpy_collate(batch: Union[np.ndarray, Sequence[Any], Any]):
+def numpy_collate(batch: np.ndarray | Sequence[Any] | Any):
     """Collate function for numpy arrays.
 
     This function acts as replacement to the standard PyTorch-tensor collate function in PyTorch DataLoader.
@@ -41,7 +41,8 @@ def batch_collate(tuple_class: NamedTuple, batch: Sequence[Any]):
 
 
 def numpy_batch_collate(tuple_class: NamedTuple, batch: Sequence[Any]):
-    """Wrapper function to combine numpy_collate and batch_collate into a single function.
+    """Wrapper function to combine numpy_collate and batch_collate into a
+    single function.
 
     Args:
         tuple_class: Batch class to be constructed. Can be a dataclass or a NamedTuple.
@@ -54,7 +55,8 @@ def numpy_batch_collate(tuple_class: NamedTuple, batch: Sequence[Any]):
 
 
 def build_batch_collate(tuple_class: NamedTuple):
-    """Wrapper function to combine numpy_collate and batch_collate into a single function.
+    """Wrapper function to combine numpy_collate and batch_collate into a
+    single function.
 
     Args:
         tuple_class: Batch class to be constructed. Can be a dataclass or a NamedTuple.

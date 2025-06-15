@@ -1,1 +1,1 @@
-from tests.models.networks import SimpleClassifier
+from tests.models.networks import SimpleClassifier, SimpleClassifierLinen
