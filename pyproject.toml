@@ -10,8 +10,8 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [
-    { name = "Korbinian Pöppel", email = "korbip@korbip.de" },
     { name = "Phillip Lippe", email = "phillip.lippe@googlemail.com" },
+    { name = "Korbinian Pöppel", email = "korbip@korbip.de" },
 ]
 
 dependencies = [
@@ -29,7 +29,8 @@ dependencies = [
     "orbax-checkpoint>=0.4.0",
     "flax>=0.7.0",
     "absl-py",
-    "ml-collections",
+    "compoconf",
+    "wandb",
 ]
 
 [project.optional-dependencies]
@@ -37,6 +38,7 @@ test = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "pytest-sugar>=0.9.7",
+    "ml_collections",
 ]
 dev = [
     "black>=23.0.0",

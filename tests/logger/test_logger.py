@@ -1,7 +1,6 @@
 from absl.testing import absltest
-from ml_collections import ConfigDict
 
-from jax_trainer.logger.utils import flatten_configdict
+from jax_trainer.logger.utils import flatten_dict
 
 
 class TestLogger(absltest.TestCase):
@@ -18,15 +17,15 @@ class TestLogger(absltest.TestCase):
                 "g": 4,
             },
         }
-        config = ConfigDict(config)
-        flattened_config = flatten_configdict(config, separation_mark=".")
+
+        flattened_config = flatten_dict(config, separation_mark=".")
         self.assertEqual(flattened_config["a"], 1)
         self.assertEqual(flattened_config["b.c"], 2)
         self.assertEqual(flattened_config["b.d.e"], 3)
         self.assertEqual(flattened_config["f.g"], 4)
         self.assertEqual(len(flattened_config), 4)
 
-        flatten_config = flatten_configdict(config, separation_mark="/")
+        flatten_config = flatten_dict(config, separation_mark="/")
         self.assertEqual(flatten_config["a"], 1)
         self.assertEqual(flatten_config["b/c"], 2)
         self.assertEqual(flatten_config["b/d/e"], 3)

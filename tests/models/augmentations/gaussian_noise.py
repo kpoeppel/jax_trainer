@@ -41,7 +41,7 @@ class GaussianNoiseAugmentationNNX(BaseAugmentationNNX):
         super().__init__(config=config, wrapped_model=wrapped_model)
         self.config = config
         self.wrapped_model = wrapped_model
-        self.augmentation = rngs.get("augmentation", None)
+        self.augmentation = rngs["augmentation"]
 
     def augment(self, inp, *args, **kwargs):
         """Add Gaussian noise to the input.

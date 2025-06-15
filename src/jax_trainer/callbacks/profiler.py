@@ -58,9 +58,11 @@ class JAXProfiler(Callback):
         if self.profiler_active:
             logging.info("Stopping trace")
             if self.trainer.config.model_mode == "nnx":
-                jax.tree_map(lambda x: x.block_until_ready(), nnx.state(self.trainer.model))
+                jax.tree_util.tree_map(
+                    lambda x: x.block_until_ready(), nnx.state(self.trainer.model)
+                )
             else:
-                jax.tree_map(lambda x: x.block_until_ready(), self.trainer.state.params)
+                jax.tree_util.tree_map(lambda x: x.block_until_ready(), self.trainer.state.params)
             jax.profiler.stop_trace()
             self.profiler_last_time = time.time()
             self.profiler_active = False

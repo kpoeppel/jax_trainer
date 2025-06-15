@@ -187,7 +187,6 @@ class AugmentedImgClassifierTrainer(TrainerModule):
             model_rng, init_rng = random.split(main_rng)
             self.rngs = (model_rng, init_rng)
         else:
-            self.rngs = nnx.Rngs(main_rng)
             self.rngs = nnx.Rngs(main_rng, augmentation=self.config.augmentation_seed)
 
     def pre_model_init_callback(self):

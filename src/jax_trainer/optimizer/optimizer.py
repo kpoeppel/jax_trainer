@@ -64,7 +64,7 @@ class SGD(OptimizerInterface):
 
             @partial(optax.inject_hyperparams, hyperparam_dtype=jnp.float32)
             def optimizer_fn(learning_rate):
-                optax.chain(
+                return optax.chain(
                     *pre,
                     optax.sgd(
                         learning_rate=learning_rate,

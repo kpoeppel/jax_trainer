@@ -49,10 +49,6 @@ from jax import random
 from jax.experimental import mesh_utils
 from jax.sharding import Mesh, NamedSharding
 from jax.sharding import PartitionSpec as P
-
-# ML collections for config
-# from ml_collections import ConfigDict, FrozenConfigDict
-# from tabulate import tabulate as python_tabulate
 from tqdm.auto import tqdm
 
 from jax_trainer.callbacks import Callback, ModelCheckpoint
@@ -282,12 +278,14 @@ class TrainerModule(RegistrableConfigInterface):
         # logging.set_stderrthreshold(logger_config.get("stderrthreshold", "warning"))
         if not os.path.isfile(os.path.join(log_dir, "config.yaml")):
             config_dict = dump_config(full_config)
-            # config_dict = jax.tree_map(class_to_name, config_dict)
+            # config_dict = jax.tree_util.tree_map(class_to_name, config_dict)
             with open(os.path.join(log_dir, "config.yaml"), "w") as f:
                 yaml.dump(config_dict, f)
         if not os.path.isfile(os.path.join(log_dir, "exmp_input.pkl")):
             inp = self.exmp_input
-            inp = jax.device_get(jax.experimental.multihost_utils.process_allgather(inp))
+            inp = jax.device_get(
+                jax.experimental.multihost_utils.process_allgather(inp, tiled=True)
+            )
             save_pytree(inp, os.path.join(log_dir, "exmp_input.pkl"))
         self.logger.log_scalar(
             "param/num_model_params",
@@ -398,7 +396,7 @@ class TrainerModule(RegistrableConfigInterface):
                     batch=batch,
                     metrics=None,
                 )
-        return jax.tree_map(lambda x: jnp.zeros_like(x), self.train_metric_shapes)
+        return jax.tree_util.tree_map(lambda x: jnp.zeros_like(x), self.train_metric_shapes)
 
     def init_eval_metrics(self, batch: Batch | None = None) -> FrozenDict:
         if not hasattr(self, "eval_metric_shapes"):
@@ -419,7 +417,7 @@ class TrainerModule(RegistrableConfigInterface):
                     self.eval_step, state=self.state, batch=batch, metrics=None
                 )
 
-        return jax.tree_map(lambda x: jnp.zeros_like(x), self.eval_metric_shapes)
+        return jax.tree_util.tree_map(lambda x: jnp.zeros_like(x), self.eval_metric_shapes)
 
     def set_dataset(self, dataset: DatasetModule):
         for callback in self.callbacks:

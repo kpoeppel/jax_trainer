@@ -115,13 +115,13 @@ class ModelCheckpoint(Callback):
         if self.trainer.config.model_mode == "nnx":
             state = nnx.state(self.trainer.model)
             state = convert_prngs_to_int(state)
-            state = jax.tree_map(lambda x: np.array(x), state)
+            state = jax.tree_util.tree_map(lambda x: np.array(x), state)
             payload = {
                 "state": state,
                 "metadata": self.metadata,
                 **(
                     {
-                        "opt_state": jax.tree_map(
+                        "opt_state": jax.tree_util.tree_map(
                             lambda x: np.array(x), nnx.state(self.trainer.optimizer)
                         )
                     }

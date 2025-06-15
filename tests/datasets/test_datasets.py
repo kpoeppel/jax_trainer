@@ -1,6 +1,5 @@
 import optax
 from absl.testing import absltest
-from ml_collections import ConfigDict
 
 from jax_trainer.datasets import DatasetModule
 from jax_trainer.datasets.examples import CIFAR10Config, CIFAR10Dataset

@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from compoconf import ConfigInterface, RegistrableConfigInterface, register_interface
-from ml_collections import ConfigDict
 
 from jax_trainer.datasets import DatasetModule
 
@@ -17,7 +16,9 @@ class CallbackConfig(ConfigInterface):
 class Callback(RegistrableConfigInterface):
     """Base class for callbacks."""
 
-    def __init__(self, config: ConfigDict, trainer: Any, data_module: DatasetModule | None = None):
+    def __init__(
+        self, config: CallbackConfig, trainer: Any, data_module: DatasetModule | None = None
+    ):
         """Base class for callbacks.
 
         Args:
